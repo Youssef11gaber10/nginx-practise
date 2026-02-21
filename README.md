@@ -32,6 +32,85 @@ nginx-practice/
 
 ---
 
+## 🌍 How a Request Actually Works — DNS → IP → Host Header
+
+Understanding this flow is the key to understanding how NGINX serves multiple websites from one IP.
+
+### The Full Journey of `http://example.com`
+
+```
+Browser types: http://example.com
+       │
+       ▼
+1. DNS Resolution
+   OS checks /etc/hosts first (before asking any real DNS server)
+   Finds: 192.168.0.4  example.com
+   → resolves to 192.168.0.4
+       │
+       ▼
+2. TCP Connection
+   Browser opens a connection to 192.168.0.4:80
+       │
+       ▼
+3. HTTP Request sent
+   GET / HTTP/1.1
+   Host: example.com        ← this is the key!
+   ...
+       │
+       ▼
+4. NGINX receives the request
+   It's listening on 192.168.0.4:80
+   Looks at the "Host" header → "example.com"
+   Matches the server block with: server_name example.com;
+       │
+       ▼
+5. NGINX serves /usr/share/nginx/example.com/index.html
+```
+
+### Why the `Host` Header Matters
+
+NGINX receives ALL traffic on port 80 — `example.com`, `vois.com`, `oldsite.com` all resolve to the **same IP** (`192.168.0.4`). The only thing that tells NGINX which website the client wants is the **`Host` header** inside the HTTP request.
+
+This is called **Name-Based Virtual Hosting** — one IP, many websites, differentiated purely by the `Host` header.
+
+### Testing with `curl -H`
+
+When you run `curl http://example.com`, curl automatically sets the `Host` header to `example.com`. But you can override it manually with `-H` to trick NGINX into thinking you're visiting a different site — even if you're hitting the IP directly:
+
+```bash
+# Normal curl — Host header is set to "example.com" automatically
+curl http://example.com
+
+# Same thing, but explicit — exactly what curl does under the hood
+curl -H "Host: example.com" http://192.168.0.4
+
+# Hit the same IP but ask for vois.com — NGINX will serve vois.com's content!
+curl -H "Host: vois.com" http://192.168.0.4
+
+# Ask for oldsite.com — NGINX will return the 301 redirect
+curl -H "Host: oldsite.com" http://192.168.0.4
+
+# Ask for proxy_server.com — NGINX will forward to the backend pool
+curl -H "Host: proxy_server.com" http://192.168.0.4
+```
+
+> 💡 This proves that NGINX doesn't care about the IP or domain name in the URL — it **only** looks at the `Host` header to decide which `server_name` block to use.
+
+### Verifying the Host Header is Being Sent
+
+```bash
+# -v (verbose) shows the full request headers curl sends
+curl -v http://example.com
+
+# In the output you'll see:
+# > GET / HTTP/1.1
+# > Host: example.com       ← NGINX reads this
+# > User-Agent: curl/...
+# > Accept: */*
+```
+
+---
+
 ## 🌐 Local DNS Setup (`/etc/hosts`)
 
 Since this is a local lab, we simulate real domain resolution by mapping domain names to our machine's IP inside `/etc/hosts`:
